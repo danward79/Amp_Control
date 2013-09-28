@@ -24,8 +24,7 @@ Wiring Connections
 		- Via Serial - Done
 	- Learn IR Codes and Associate - Done
 		- Store in Eprom - Done  
-  	- Loss of AC detection - Done
-    		- Control of mute relay - Done
+  	- Loss of AC detection and Control of mute relay - Done
 	
 	EEPROM Memory Mapping
 	- 1 to 4 Volume Up IR
