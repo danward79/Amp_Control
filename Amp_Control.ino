@@ -9,8 +9,11 @@
 	- Data - D6 Orange Pin 3
 	- Mute -  A3 White Pin 8
 	- IR - A1 Port 2
+  - Int1 - AC Detection D3 Purple
+  - Mute Relay - D8 White
 	
 	Basic Functions
+  - Detect AC Loss and Pressence to prevent speaker pop.
 	- Control Power Relay - Done
 	- Control Mute, Volume Increment and Decrement
 		- Via IR - Done
@@ -50,21 +53,24 @@ byte lastValue[4];
 byte volValue;
 
 bool ValidCode;
-bool muteActive;
 
 //Other Setup
-#define POWERRELAY 4 	//Power Relay Digital PIN
+#define POWERRELAY 4 	//Power Relay IO Pin
+#define MUTERELAY 8 //Mute Relay IO Pin
+#define ACDETECT 3 //ACDetect IO Pin
+bool muteRelayActive;
+bool muteActive;
 bool pwrActive;
 byte value;
 
 //End of Config
 
-//Interupt Vector - Called when IR data causes interupt
+//Interupt Service Routine Vector - Called when IR data causes interupt
 ISR(PCINT1_vect) {
   ir.poll();
 }
 
-
+//Setup Routine
 void setup () 
 {
 	delay(500);
@@ -74,15 +80,24 @@ void setup ()
 	//Enable pin change interrupts on PC1
 	PCMSK1 = bit(1);
 	PCICR |= bit(PCIE1);
+  
+  //Enable Int1 for AC Detection
+  pinMode(ACDETECT, INPUT);
+  attachInterrupt(ACDETECT - 2, handleAC, CHANGE);
 	
 	//init state variables
 	ValidCode = false;
 	muteActive = false;
 	pwrActive = false;
+  muteRelayActive = false;
 	
 	//Setup Relay Pin as Output and ensure the relay is off.
 	pinMode(POWERRELAY, OUTPUT); 
 	digitalWrite(POWERRELAY, pwrActive);
+  
+  //muteRelay
+	pinMode(MUTERELAY, OUTPUT); 
+	digitalWrite(MUTERELAY, muteRelayActive);
 	
 	// init audioPlug
 	Plug.addBoard(TWOCHANNELS);
@@ -90,25 +105,6 @@ void setup ()
 
 	//recall IR codes in EEprom, these could be invalid if never learnt.
 	recallIR();
-}
-
-bool getIRValue(void)
-{
-	while (1) 
-	{
-	count = ir.done();
-	
-		if (count > 0) 
-		{
-		data = ir.buffer();
-		
-			if (ir.decoder(count) ==  InfraredPlug::NEC) 
-			{
-				return true;
-			}
-			return false;
-		}
-	}
 }
 
 void updateVolume(byte val)
@@ -150,6 +146,7 @@ void printHelp()
 	Serial.println(F("nV - Set Volume, 0-255"));
 	Serial.println(F("nM - Mute, 0 or 1"));
 	Serial.println(F("nP - Power, 0 or 1"));
+  Serial.println(F("nX - MuteRelay, 0 or 1"));
 }
 
 void incrementVolume(bool d = 0)
@@ -222,6 +219,11 @@ void handleSerial (char chr)
 				setStartVolume (value);
 				value = 0;
 			return;
+      
+      case 'X':
+        setMuteRelay (value);
+        value = 0;
+      return;
 			
 			default :
 				printHelp();
@@ -232,7 +234,7 @@ void handleSerial (char chr)
 
 void loop () 
 {
-	if(Serial.available()) handleSerial(Serial.read());
+  if(Serial.available()) handleSerial(Serial.read()); //If Serial data is available go and work out what to do.
 
 	count = ir.done();
 	if (count > 0) 
@@ -266,8 +268,7 @@ void loop ()
 			ValidCode = false;
 			if ((lastValue[2] == MuteCode[2]) and (lastValue[3] == MuteCode[3]))
 			{
-				muteActive = !muteActive;
-				setMute(muteActive);				
+				setMute(!muteActive);				
 			}
 			else if ((lastValue[2] == VolIncr[2]) and (lastValue[3] == VolIncr[3]))
 			{
@@ -278,9 +279,8 @@ void loop ()
 				incrementVolume();    
 			}
 			else if ((lastValue[2] == PwrCode[2]) and (lastValue[3] == PwrCode[3]))
-			{
-				pwrActive = !pwrActive;
-				setPowerRelay(pwrActive);  
+			{			
+				setPowerRelay(!pwrActive);  
 			}
 		}
 	}
@@ -290,12 +290,86 @@ void setMute (bool state)
 {
 	Serial.println(state ? "Mute On" : "Mute Off");
 	Plug.setMute(state ? MUTEON : MUTEOFF);
+  muteActive = state;
 }
 
 void setPowerRelay (bool state)
 {
 	Serial.println(state ? "Power On" : "Power Off");
+  if (state) 
+  {
     digitalWrite(POWERRELAY, state); 
+    delay(3000);
+    setMuteRelay(state);
+    setVolume(recallStartVolume());
+    setMute(!state);
+  }
+  else
+  {
+    setMuteRelay(state);
+    digitalWrite(POWERRELAY, state);   
+    delay(5000);  
+  }
+  pwrActive = state;  
+}
+
+//handleAC detection
+void handleAC()
+{
+  setMuteRelay (0); //Keep Mute relay off while AC is transcient.
+  //setPowerRelay (0);
+  //Serial.println("Power Disrupted");
+  //delay (50); //Allow settling time (Probably a bit crude for an interrupt routine)
+}
+
+void setMuteRelay (bool state)
+{
+  digitalWrite(MUTERELAY, state); 
+  muteRelayActive = state;
+	Serial.println(muteRelayActive ? "Mute Relay On" : "Mute Relay Off");
+}
+
+//Recall start volume
+byte recallStartVolume()
+{
+	byte v = EEPROM.read(17);
+	return v > 150 ? 0 : v;
+}
+
+//Set the amplifier start up volume to current level
+void setStartVolume(byte value)
+{
+	if (value == 1)
+	{
+		EEPROM.write(17, Plug.getVolume(0));
+	}
+	else
+	{
+		EEPROM.write(17, 0);
+	}
+	Serial.print("Start ");
+	updateVolume(recallStartVolume());
+}
+
+//IR Routines
+//Loop to wait during learning of IR codes, returns true if IR code is NEC.
+bool getIRValue(void)
+{
+	while (1) 
+	{
+	count = ir.done();
+	
+		if (count > 0) 
+		{
+		data = ir.buffer();
+		
+			if (ir.decoder(count) ==  InfraredPlug::NEC) 
+			{
+				return true;
+			}
+			return false;
+		}
+	}
 }
 
 //Routine to learn IR commands
@@ -325,21 +399,6 @@ void learnIR ()
 	recallIR();
 }
 
-//Set the amplifier start up volume
-void setStartVolume(byte value)
-{
-	if (value == 1)
-	{
-		EEPROM.write(17, Plug.getVolume(0));
-	}
-	else
-	{
-		EEPROM.write(17, 0);
-	}
-	Serial.print("Start ");
-	updateVolume(recallStartVolume());
-}
-
 //Recall IR Commands in EEprom
 void recallIR()
 {
@@ -367,12 +426,4 @@ void readIR (int Addr, byte* Arr)
 	}
 }
 
-//Recall start volume
-byte recallStartVolume()
-{
-	byte v = EEPROM.read(17);
-	return v > 150 ? 0 : v;
-}
-
-
-
+//End of Code
