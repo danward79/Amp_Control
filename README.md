@@ -14,14 +14,18 @@ Wiring Connections
 	- Data - D6 to PGA Pin 3
 	- Mute -  A3 tp PGA Pin 8
 	- IR - A1 Port 2
+  - AC Detect - D3
+  - Mute Relay - D8
 	
 	Basic Functions
 	- Control Power Relay - Done
 	- Control Mute, Volume Increment and Decrement
 		- Via IR - Done
-		- Via RF - Note sure yet if I will implement this.
+		- Via Serial - Done
 	- Learn IR Codes and Associate - Done
-		- Store in Eprom - Done
+		- Store in Eprom - Done  
+  - Loss of AC detection - Done
+    - Control of mute relay - Done
 	
 	EEPROM Memory Mapping
 	- 1 to 4 Volume Up IR
